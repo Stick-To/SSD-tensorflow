@@ -114,8 +114,8 @@ class SSD300:
             abbox_hw = tf.concat([a1bbox_hw, a2bbox_hw, a3bbox_hw, a4bbox_hw, a5bbox_hw, a6bbox_hw], axis=0)
             total_loss = []
             for i in range(self.batch_size):
-                loss = self._compute_one_image_loss(pbbox_yx[i, ...], pbbox_hw[i, ...], abbox_y1x1[i, ...], abbox_y2x2[i, ...],
-                                                    abbox_yx[i, ...], abbox_hw[i, ...], pconf[i, ...], self.ground_truth[i, ...])
+                loss = self._compute_one_image_loss(pbbox_yx[i, ...], pbbox_hw[i, ...], abbox_y1x1, abbox_y2x2,
+                                                    abbox_yx, abbox_hw, pconf[i, ...], self.ground_truth[i, ...])
                 total_loss.append(loss)
             total_loss = tf.reduce_mean(total_loss)
             optimizer = tf.train.MomentumOptimizer(learning_rate=self.lr, momentum=.9)
@@ -349,6 +349,7 @@ class SSD300:
         other_pbbox_yx = tf.boolean_mask(pbbox_yx, othermask)
         other_pbbox_hw = tf.boolean_mask(pbbox_hw, othermask)
         other_pconf = tf.boolean_mask(pconf, othermask)
+
         other_abbox_yx = tf.boolean_mask(abbox_yx, othermask)
         other_abbox_hw = tf.boolean_mask(abbox_hw, othermask)
 
@@ -370,16 +371,19 @@ class SSD300:
         pos_shape = tf.shape(pos_pconf)
 
         neg_pconf = tf.boolean_mask(other_pconf, neg_agiou_mask)
+
         neg_shape = tf.shape(neg_pconf)
         num_pos = gshape[0] + pos_shape[0]
         num_neg = neg_shape[0]
-        chosen_num_neg = tf.cond(num_neg > 3*num_pos, 3*num_pos, num_neg)
+        chosen_num_neg = tf.cond(num_neg > 3*num_pos, lambda: 3*num_pos, lambda: num_neg)
         neg_class_id = tf.constant([self.num_classes-1])
-        neg_class_id = tf.constant([neg_class_id]*num_neg, axis=0)
+        neg_class_id = tf.tile(neg_class_id, [num_neg])
+        print(neg_class_id)
         neg_label = tf.one_hot(neg_class_id, depth=self.num_classes)
-        total_neg_loss = tf.losses.softmax_cross_entropy(neg_label, neg_pconf, reduction=None)
+
+        total_neg_loss = tf.losses.softmax_cross_entropy(neg_label, neg_pconf, reduction=tf.losses.Reduction.NONE)
         sorted_neg_loss = tf.gather(total_neg_loss, tf.contrib.framework.argsort(total_neg_loss, direction='DESCENDING'))
-        chosen_neg_loss = tf.gather(sorted_neg_loss, tf.range(0, chosen_num_neg, dtype=tf.int64))
+        chosen_neg_loss = tf.gather(sorted_neg_loss, tf.range(0, chosen_num_neg, dtype=tf.int32))
         neg_loss = tf.reduce_mean(chosen_neg_loss)
 
         total_pos_pbbox_yx = tf.concat([best_pbbox_yx, pos_ppox_yx], axis=0)
@@ -402,7 +406,7 @@ class SSD300:
         return total_loss
 
     def _smooth_l1_loss(self, x):
-        return tf.cond(tf.abs(x) < 1., 0.5*x**2, tf.abs(x)-0.5)
+        return tf.cond(tf.abs(x) < 1., lambda: 0.5*x**2, lambda: tf.abs(x)-0.5)
 
     def _bn(self, bottom):
         bn = tf.layers.batch_normalization(
