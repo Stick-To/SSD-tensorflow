@@ -3,6 +3,9 @@ from __future__ import division
 from __future__ import print_function
 import tensorflow as tf
 from tensorflow.python import pywrap_tensorflow as wrap
+import sys
+import os
+import numpy as np
 
 
 class SSD300:
@@ -67,7 +70,8 @@ class SSD300:
         with tf.variable_scope('feature_extractor'):
             feat1, feat2, feat3, feat4, feat5, feat6 = self._feature_extractor(self.images)
             feat1 = tf.nn.l2_normalize(feat1, axis=3 if self.data_format == 'channels_last' else 1)
-            feat1 = 20. * feat1
+            norm_factor = tf.get_variable('l2_norm_factor', initializer=tf.constant(20.))
+            feat1 = norm_factor * feat1
         with tf.variable_scope('regressor'):
             pred1 = self._conv_layer(feat1, 4*(self.num_classes+4), 3, 1, 'pred1')
             pred2 = self._conv_layer(feat2, 6*(self.num_classes+4), 3, 1, 'pred2')
@@ -89,12 +93,12 @@ class SSD300:
             p5shape = tf.shape(pred5)
             p6shape = tf.shape(pred6)
         with tf.variable_scope('inference'):
-            p1bbox_yx, p1bbox_hw, p1conf = self._get_pbbox(pred1, p1shape, 4)
-            p2bbox_yx, p2bbox_hw, p2conf = self._get_pbbox(pred2, p2shape, 6)
-            p3bbox_yx, p3bbox_hw, p3conf = self._get_pbbox(pred3, p3shape, 6)
-            p4bbox_yx, p4bbox_hw, p4conf = self._get_pbbox(pred4, p4shape, 6)
-            p5bbox_yx, p5bbox_hw, p5conf = self._get_pbbox(pred5, p5shape, 4)
-            p6bbox_yx, p6bbox_hw, p6conf = self._get_pbbox(pred6, p6shape, 4)
+            p1bbox_yx, p1bbox_hw, p1conf = self._get_pbbox(pred1)
+            p2bbox_yx, p2bbox_hw, p2conf = self._get_pbbox(pred2)
+            p3bbox_yx, p3bbox_hw, p3conf = self._get_pbbox(pred3)
+            p4bbox_yx, p4bbox_hw, p4conf = self._get_pbbox(pred4)
+            p5bbox_yx, p5bbox_hw, p5conf = self._get_pbbox(pred5)
+            p6bbox_yx, p6bbox_hw, p6conf = self._get_pbbox(pred6)
 
             s = [0.2 + (0.9 - 0.2) / 5 * (i-1) * self.input_size for i in range(1, 8)]
             s = [[s[i], (s[i]*s[i+1])**0.5] for i in range(0, 6)]
@@ -140,6 +144,55 @@ class SSD300:
         with tf.variable_scope('summaries'):
             tf.summary.scalar('loss', self.loss)
             self.summary_op = tf.summary.merge_all()
+
+    def train_one_epoch(self, lr, writer=None, data_provider=None):
+        self.is_training = True
+        if data_provider is not None:
+            self.num_train = data_provider['num_train']
+            self.train_generator = data_provider['train_generator']
+            self.train_initializer, self.train_iterator = self.train_generator
+            if data_provider['val_generator'] is not None:
+                self.num_val = data_provider['num_val']
+                self.val_generator = data_provider['val_generator']
+                self.val_initializer, self.val_iterator = self.val_generator
+            self.data_shape = data_provider['data_shape']
+            shape = [self.batch_size].extend(data_provider['data_shape'])
+            self.images.set_shape(shape)
+        self.sess.run(self.train_initializer)
+        mean_loss = []
+        num_iters = self.num_train // self.batch_size
+        for i in range(num_iters):
+            _, loss, summaries = self.sess.run([self.train_op, self.loss, self.summary_op],
+                                               feed_dict={self.lr: lr})
+            sys.stdout.write('\r>> ' + 'iters '+str(i)+str('/')+str(num_iters)+' loss '+str(loss))
+            sys.stdout.flush()
+            mean_loss.append(loss)
+            if writer is not None:
+                writer.add_summary(summaries, global_step=self.global_step)
+        sys.stdout.write('\n')
+        mean_loss = np.mean(mean_loss)
+        return mean_loss
+
+    # def test_one__image(self, images):
+    #     self.is_training = False
+    #     pred = self.sess.run(self.detection_pred, feed_dict={self.images: images})
+    #     return pred
+
+    def save_weight(self, mode, path):
+        assert(mode in ['latest', 'best'])
+        if mode == 'latest':
+            saver = self.saver
+        else:
+            saver = self.best_saver
+        if not tf.gfile.Exists(os.path.dirname(path)):
+            tf.gfile.MakeDirs(os.path.dirname(path))
+            print(os.path.dirname(path), 'does not exist, create it done')
+        saver.save(self.sess, path, global_step=self.global_step)
+        print('save', mode, 'model in', path, 'successfully')
+
+    def load_weight(self, path):
+        self.saver.restore(self.sess, path)
+        print('load weight', path, 'successfully')
 
     def _feature_extractor(self, images):
         conv1_1 = self._load_conv_layer(images,
@@ -265,13 +318,11 @@ class SSD300:
         conv11_2 = self._conv_layer(conv11_1, 256, 3, 2, 'conv11_2', activation=tf.nn.relu)
         return conv4_3, conv7, conv8_2, conv9_2, conv10_2, conv11_2
 
-    def _get_pbbox(self, pred, pshape, num_default_bbox):
-        pred = tf.reshape(pred, [self.batch_size, pshape[1], pshape[2], num_default_bbox, -1])
-        pconf = tf.reshape(pred[..., :self.num_classes], [self.batch_size, -1, self.num_classes])
-        pbbox = pred[..., self.num_classes:]
-        pbbox = tf.reshape(pbbox, [self.batch_size, pshape[1], pshape[2], num_default_bbox, 4])
-        pbbox_yx = tf.reshape(pbbox[..., :2], [self.batch_size, -1, 2])
-        pbbox_hw = tf.reshape(pbbox[..., 2:], [self.batch_size, -1, 2])
+    def _get_pbbox(self, pred):
+        pred = tf.reshape(pred, [self.batch_size, -1, self.num_classes+4])
+        pconf = pred[..., :self.num_classes]
+        pbbox_yx = pred[..., self.num_classes:self.num_classes+2]
+        pbbox_hw = pred[..., self.num_classes+2:]
         return pbbox_yx, pbbox_hw, pconf
 
     def _get_abbox(self, size, aspect_ratio, pshape):
@@ -298,7 +349,6 @@ class SSD300:
 
     def _compute_one_image_loss(self, pbbox_yx, pbbox_hw, abbox_y1x1, abbox_y2x2,
                                 abbox_yx, abbox_hw, pconf, ground_truth):
-
         slice_index = tf.argmin(ground_truth, axis=0)[0]
         ground_truth = tf.gather(ground_truth, tf.range(0, slice_index, dtype=tf.int64))
         gbbox_yx = ground_truth[..., 0:2]
@@ -354,12 +404,12 @@ class SSD300:
         other_abbox_hw = tf.boolean_mask(abbox_hw, othermask)
 
         agiou_rate = tf.transpose(gaiou_rate)
-        agiou_rate = tf.boolean_mask(agiou_rate, othermask)
-        best_agiou_rate = tf.reduce_max(agiou_rate, axis=1)
+        other_agiou_rate = tf.boolean_mask(agiou_rate, othermask)
+        best_agiou_rate = tf.reduce_max(other_agiou_rate, axis=1)
         pos_agiou_mask = best_agiou_rate > 0.5
         neg_agiou_mask = (1. - tf.cast(pos_agiou_mask, tf.float32)) > 0.
-        pos_rgindex = tf.argmax(agiou_rate, axis=1)
-        pos_rgindex = tf.boolean_mask(pos_rgindex, pos_agiou_mask)
+        rgindex = tf.argmax(other_agiou_rate, axis=1)
+        pos_rgindex = tf.boolean_mask(rgindex, pos_agiou_mask)
         pos_ppox_yx = tf.boolean_mask(other_pbbox_yx, pos_agiou_mask)
         pos_ppox_hw = tf.boolean_mask(other_pbbox_hw, pos_agiou_mask)
         pos_pconf = tf.boolean_mask(other_pconf, pos_agiou_mask)
@@ -378,7 +428,6 @@ class SSD300:
         chosen_num_neg = tf.cond(num_neg > 3*num_pos, lambda: 3*num_pos, lambda: num_neg)
         neg_class_id = tf.constant([self.num_classes-1])
         neg_class_id = tf.tile(neg_class_id, [num_neg])
-        print(neg_class_id)
         neg_label = tf.one_hot(neg_class_id, depth=self.num_classes)
 
         total_neg_loss = tf.losses.softmax_cross_entropy(neg_label, neg_pconf, reduction=tf.losses.Reduction.NONE)
@@ -406,7 +455,7 @@ class SSD300:
         return total_loss
 
     def _smooth_l1_loss(self, x):
-        return tf.cond(tf.abs(x) < 1., lambda: 0.5*x**2, lambda: tf.abs(x)-0.5)
+        return tf.where(tf.abs(x) < 1., 0.5*x*x, tf.abs(x)-0.5)
 
     def _bn(self, bottom):
         bn = tf.layers.batch_normalization(
