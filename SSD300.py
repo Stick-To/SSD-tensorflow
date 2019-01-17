@@ -45,7 +45,8 @@ class SSD300:
         self._define_inputs()
         self._build_graph()
         self._create_saver()
-        self._create_summary()
+        if self.mode == 'train':
+            self._create_summary()
         self._init_session()
 
     def _define_inputs(self):
@@ -116,6 +117,7 @@ class SSD300:
             abbox_y2x2 = tf.concat([a1bbox_y2x2, a2bbox_y2x2, a3bbox_y2x2, a4bbox_y2x2, a5bbox_y2x2, a6bbox_y2x2], axis=0)
             abbox_yx = tf.concat([a1bbox_yx, a2bbox_yx, a3bbox_yx, a4bbox_yx, a5bbox_yx, a6bbox_yx], axis=0)
             abbox_hw = tf.concat([a1bbox_hw, a2bbox_hw, a3bbox_hw, a4bbox_hw, a5bbox_hw, a6bbox_hw], axis=0)
+        if self.mode == 'train':
             total_loss = []
             for i in range(self.batch_size):
                 loss = self._compute_one_image_loss(pbbox_yx[i, ...], pbbox_hw[i, ...], abbox_y1x1, abbox_y2x2,
@@ -129,11 +131,41 @@ class SSD300:
                 [tf.nn.l2_loss(var) for var in tf.trainable_variables('regressor')]
             )
             self.train_op = optimizer.minimize(self.loss, global_step=self.global_step)
+        else:
+            pbbox_yxt = pbbox_yx[0, ...]
+            pbbox_hwt = pbbox_hw[0, ...]
+            pconft = tf.nn.softmax(pconf[0, ...])
+            confidence = tf.reduce_max(pconft, axis=-1)
+            class_id = tf.argmax(pconft, axis=-1)
+            conf_mask = class_id < self.num_classes - 1
+            pbbox_yxt = tf.boolean_mask(pbbox_yxt, conf_mask)
+            pbbox_hwt = tf.boolean_mask(pbbox_hwt, conf_mask)
+            confidence = tf.boolean_mask(confidence, conf_mask)
+            class_id = tf.boolean_mask(class_id, conf_mask)
+            abbox_yxt = tf.boolean_mask(abbox_yx, conf_mask)
+            abbox_hwt = tf.boolean_mask(abbox_hw, conf_mask)
+            dpbbox_yxt = pbbox_yxt * abbox_hwt + abbox_yxt
+            dpbbox_hwt = abbox_hwt * tf.exp(pbbox_hwt)
+            dpbbox_y1x1 = dpbbox_yxt - dpbbox_hwt / 2.
+            dpbbox_y2x2 = dpbbox_yxt + dpbbox_hwt / 2.
+            dpbbox_y1x1y2x2 = tf.concat([dpbbox_y1x1, dpbbox_y2x2], axis=-1)
+            pred_mask = confidence >= self.nms_score_threshold
+            confidence = tf.boolean_mask(confidence, pred_mask)
+            class_id = tf.boolean_mask(class_id, pred_mask)
+            dpbbox_y1x1y2x2 = tf.boolean_mask(dpbbox_y1x1y2x2, pred_mask)
+            selected_index = tf.image.non_max_suppression(
+                dpbbox_y1x1y2x2, confidence, iou_threshold=self.nms_score_threshold, max_output_size=self.nms_max_boxes
+            )
+            dpbbox_y1x1y2x2 = tf.gather(dpbbox_y1x1y2x2, selected_index)
+            class_id = tf.gather(class_id, selected_index)
+            confidence = tf.gather(confidence, selected_index)
+            self.detection_pred = [confidence, dpbbox_y1x1y2x2, class_id]
 
     def _init_session(self):
         self.sess = tf.InteractiveSession()
         self.sess.run(tf.global_variables_initializer())
-        self.sess.run(self.train_initializer)
+        if self.mode == 'train':
+            self.sess.run(self.train_initializer)
 
     def _create_saver(self):
         weights = tf.trainable_variables(scope='feature_extractor') + tf.trainable_variables('regressor')
@@ -173,10 +205,10 @@ class SSD300:
         mean_loss = np.mean(mean_loss)
         return mean_loss
 
-    # def test_one__image(self, images):
-    #     self.is_training = False
-    #     pred = self.sess.run(self.detection_pred, feed_dict={self.images: images})
-    #     return pred
+    def test_one_image(self, images):
+        self.is_training = False
+        pred = self.sess.run(self.detection_pred, feed_dict={self.images: images})
+        return pred
 
     def save_weight(self, mode, path):
         assert(mode in ['latest', 'best'])

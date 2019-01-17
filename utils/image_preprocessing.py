@@ -135,23 +135,15 @@ def random_crop(image, shape, target_size, shorter_side, index, ground_truth=Non
         bias = tf.convert_to_tensor([random_height, random_height, random_width, random_width, 0.], tf.float32)
         bias = tf.reshape(bias, [1, 5])
         ground_truth = ground_truth - bias
-        ymin = tf.expand_dims(ground_truth[:, 0], -1)
-        ymax = tf.expand_dims(ground_truth[:, 1], -1)
-        xmin = tf.expand_dims(ground_truth[:, 2], -1)
-        xmax = tf.expand_dims(ground_truth[:, 3], -1)
-        class_id = tf.expand_dims(ground_truth[:, 4], -1)
-        ymin = tf.where(ymin <= 0, ymin-ymin, ymin)
-        ymax = tf.where(ymax >= target_size[0], ymax-ymax+target_size[0]-1, ymax)
-        xmin = tf.where(xmin <= 0, xmin-xmin, xmin)
-        xmax = tf.where(xmax >= target_size[1], xmax-xmax+target_size[1]-1, xmax)
-        ground_truth = tf.concat([ymin, ymax, xmin, xmax, class_id], -1)
-        mask = tf.reshape(ground_truth[:, 1] > target_size[0]/30, [-1, ])
-        ground_truth = tf.boolean_mask(ground_truth, mask)
-        mask = tf.reshape(ground_truth[:, 3] > target_size[1]/30, [-1, ])
-        ground_truth = tf.boolean_mask(ground_truth, mask)
-        mask = tf.reshape(ground_truth[:, 0] < target_size[0], [-1, ])
-        ground_truth = tf.boolean_mask(ground_truth, mask)
-        mask = tf.reshape(ground_truth[:, 2] < target_size[1], [-1, ])
+        ymin = ground_truth[:, 0]
+        ymax = ground_truth[:, 1]
+        xmin = ground_truth[:, 2]
+        xmax = ground_truth[:, 3]
+        y_center = (ymin + ymax) / 2.
+        x_center = (xmin + xmax) / 2.
+        y_mask = tf.cast(y_center > 0., tf.float32) * tf.cast(y_center < target_size[0], tf.float32)
+        x_mask = tf.cast(x_center > 0., tf.float32) * tf.cast(x_center < target_size[1], tf.float32)
+        mask = (y_mask * x_mask) > 0.
         ground_truth = tf.boolean_mask(ground_truth, mask)
         return image, ground_truth
     else:
