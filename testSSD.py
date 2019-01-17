@@ -11,15 +11,15 @@ import matplotlib.patches as patches
 from skimage import io, transform
 from utils.voc_classname_encoder import  classname_to_ids
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-os.environ['CUDA_VISIBLE_DEVICES'] = ''
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 lr = 0.0001
-batch_size = 32
-buffer_size = 512
+batch_size = 1
+buffer_size = 2
 epochs = 160
 reduce_lr_epoch = [50, 150]
 ckpt_path = os.path.join('.', 'vgg_16.ckpt')
 config = {
-    'mode': 'test',
+    'mode': 'train',  # train ,test
     'data_format': 'channels_last',
     'num_classes': 20,
     'weight_decay': 1e-4,
