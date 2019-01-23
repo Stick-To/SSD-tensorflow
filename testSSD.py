@@ -6,15 +6,15 @@ import tensorflow as tf
 import numpy as np
 import SSD300 as net
 import os
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-from skimage import io, transform
-from utils.voc_classname_encoder import  classname_to_ids
+# import matplotlib.pyplot as plt
+# import matplotlib.patches as patches
+# from skimage import io, transform
+# from utils.voc_classname_encoder import  classname_to_ids
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 lr = 0.0001
-batch_size = 1
-buffer_size = 2
+batch_size = 2
+buffer_size = 3
 epochs = 160
 reduce_lr_epoch = [50, 150]
 ckpt_path = os.path.join('.', 'vgg_16.ckpt')
@@ -41,22 +41,14 @@ image_preprocess_config = {
     'pad_truth_to': 60
 }
 
-data = ['./dat/test_00000-of-00010.tfrecord',
-        './dat/test_00001-of-00010.tfrecord',
-        './dat/test_00002-of-00010.tfrecord',
-        './dat/test_00003-of-00010.tfrecord',
-        './dat/test_00004-of-00010.tfrecord',
-        './dat/test_00005-of-00010.tfrecord',
-        './dat/test_00006-of-00010.tfrecord',
-        './dat/test_00007-of-00010.tfrecord',
-        './dat/test_00008-of-00010.tfrecord',
-        './dat/test_00009-of-00010.tfrecord']
+data = ['./test/test_00000-of-00005.tfrecord',
+        './test/test_00001-of-00005.tfrecord']
 
 train_gen = voc_utils.get_generator(data,
                                     batch_size, buffer_size, image_preprocess_config)
 trainset_provider = {
     'data_shape': [300, 300, 3],
-    'num_train': 22136,
+    'num_train': 100,
     'num_val': 0,
     'train_generator': train_gen,
     'val_generator': None
