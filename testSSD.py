@@ -6,10 +6,10 @@ import tensorflow as tf
 import numpy as np
 import SSD300 as net
 import os
-# import matplotlib.pyplot as plt
-# import matplotlib.patches as patches
-# from skimage import io, transform
-# from utils.voc_classname_encoder import  classname_to_ids
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from skimage import io, transform
+from utils.voc_classname_encoder import  classname_to_ids
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 lr = 0.0001
@@ -80,7 +80,3 @@ for i in range(epochs):
 #     axis.add_patch(rect)
 #     plt.text(bbox[i][1],bbox[i][0], id_to_clasname[class_id[i]]+str(' ')+str(scores[i]), color='red', fontsize=12)
 # plt.show()
-
-
-
-

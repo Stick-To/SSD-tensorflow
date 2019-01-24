@@ -148,14 +148,12 @@ class SSD300:
         else:
             pbbox_yxt = pbbox_yx[0, ...]
             pbbox_hwt = pbbox_hw[0, ...]
-            pconft = tf.nn.softmax(pconf[0, ...])
-            confidence = tf.reduce_max(pconft, axis=-1)
-            class_id = tf.argmax(pconft, axis=-1)
-            conf_mask = class_id < self.num_classes - 1
+            confidence = tf.nn.softmax(pconf[0, ...])
+            class_id = tf.argmax(confidence, axis=-1)
+            conf_mask = tf.less(class_id, self.num_classes - 1)
             pbbox_yxt = tf.boolean_mask(pbbox_yxt, conf_mask)
             pbbox_hwt = tf.boolean_mask(pbbox_hwt, conf_mask)
-            confidence = tf.boolean_mask(confidence, conf_mask)
-            class_id = tf.boolean_mask(class_id, conf_mask)
+            confidence = tf.boolean_mask(confidence, conf_mask)[:, :self.num_classes - 1]
             abbox_yxt = tf.boolean_mask(abbox_yx, conf_mask)
             abbox_hwt = tf.boolean_mask(abbox_hw, conf_mask)
             dpbbox_yxt = pbbox_yxt * abbox_hwt + abbox_yxt
@@ -163,17 +161,25 @@ class SSD300:
             dpbbox_y1x1 = dpbbox_yxt - dpbbox_hwt / 2.
             dpbbox_y2x2 = dpbbox_yxt + dpbbox_hwt / 2.
             dpbbox_y1x1y2x2 = tf.concat([dpbbox_y1x1, dpbbox_y2x2], axis=-1)
-            pred_mask = confidence >= self.nms_score_threshold
-            confidence = tf.boolean_mask(confidence, pred_mask)
-            class_id = tf.boolean_mask(class_id, pred_mask)
-            dpbbox_y1x1y2x2 = tf.boolean_mask(dpbbox_y1x1y2x2, pred_mask)
-            selected_index = tf.image.non_max_suppression(
-                dpbbox_y1x1y2x2, confidence, iou_threshold=self.nms_score_threshold, max_output_size=self.nms_max_boxes
-            )
-            dpbbox_y1x1y2x2 = tf.gather(dpbbox_y1x1y2x2, selected_index)
-            class_id = tf.gather(class_id, selected_index)
-            confidence = tf.gather(confidence, selected_index)
-            self.detection_pred = [confidence, dpbbox_y1x1y2x2, class_id]
+            filter_mask = tf.greater_equal(confidence, self.nms_score_threshold)
+            scores = []
+            class_id = []
+            bbox = []
+            for i in range(self.num_classes - 1):
+                scoresi = tf.boolean_mask(confidence[:, i], filter_mask[:, i])
+                bboxi = tf.boolean_mask(dpbbox_y1x1y2x2, filter_mask[:, i])
+                selected_indices = tf.image.non_max_suppression(
+
+                    bboxi, scoresi, self.nms_max_boxes, self.nms_iou_threshold,
+                )
+                scores.append(tf.gather(scoresi, selected_indices))
+                bbox.append(tf.gather(bboxi, selected_indices))
+                class_id.append(tf.ones_like(tf.gather(scoresi, selected_indices), tf.int32) * i)
+            bbox = tf.concat(bbox, axis=0)
+            scores = tf.concat(scores, axis=0)
+            class_id = tf.concat(class_id, axis=0)
+
+            self.detection_pred = [scores, bbox, class_id]
 
     def _init_session(self):
         self.sess = tf.InteractiveSession()
@@ -372,16 +378,14 @@ class SSD300:
         return pbbox_yx, pbbox_hw, pconf
 
     def _get_abbox(self, size, aspect_ratio, pshape):
-        topleft_y = tf.range(0., tf.cast(pshape[1], tf.float32), dtype=tf.float32) \
-                    * tf.cast(self.input_size, tf.float32) / tf.cast(pshape[1], tf.float32)
-        topleft_x = tf.range(0., tf.cast(pshape[2], tf.float32), dtype=tf.float32) \
-                    * tf.cast(self.input_size, tf.float32) / tf.cast(pshape[2], tf.float32)
-        topleft_y = tf.reshape(topleft_y, [-1, 1, 1, 1])
-        topleft_x = tf.reshape(topleft_x, [1, -1, 1, 1])
-        topleft_y = tf.tile(topleft_y, [1, pshape[2], 1, 1])
-        topleft_x = tf.tile(topleft_x, [pshape[1], 1, 1, 1])
-        topleft = tf.concat([topleft_y, topleft_x], -1)
-        topleft = tf.tile(topleft, [1, 1, len(aspect_ratio)+2, 1])
+        topleft_y = tf.range(0., tf.cast(pshape[1], tf.float32), dtype=tf.float32)
+        topleft_x = tf.range(0., tf.cast(pshape[2], tf.float32), dtype=tf.float32)
+        topleft_y = tf.reshape(topleft_y, [-1, 1, 1, 1]) + 0.5
+        topleft_x = tf.reshape(topleft_x, [1, -1, 1, 1]) + 0.5
+        topleft_y = tf.tile(topleft_y, [1, pshape[2], 1, 1]) * tf.cast(self.input_size, tf.float32) / tf.cast(pshape[1], tf.float32)
+        topleft_x = tf.tile(topleft_x, [pshape[1], 1, 1, 1]) * tf.cast(self.input_size, tf.float32) / tf.cast(pshape[2], tf.float32)
+        topleft_yx = tf.concat([topleft_y, topleft_x], -1)
+        topleft_yx = tf.tile(topleft_yx, [1, 1, len(aspect_ratio)+2, 1])
 
         priors = [[size[0], size[0]], [size[1], size[1]]]
         for i in range(len(aspect_ratio)):
@@ -389,9 +393,9 @@ class SSD300:
         priors = tf.convert_to_tensor(priors, tf.float32)
         priors = tf.reshape(priors, [1, 1, -1, 2])
 
-        abbox_y1x1 = tf.reshape(topleft, [-1, 2])
-        abbox_y2x2 = tf.reshape(topleft + priors, [-1, 2])
-        abbox_yx = abbox_y2x2 / 2. + abbox_y1x1 / 2.
+        abbox_y1x1 = tf.reshape(topleft_yx - priors / 2., [-1, 2])
+        abbox_y2x2 = tf.reshape(topleft_yx + priors / 2., [-1, 2])
+        abbox_yx = abbox_y1x1 / 2. + abbox_y2x2 / 2.
         abbox_hw = abbox_y2x2 - abbox_y1x1
         return abbox_y1x1, abbox_y2x2, abbox_yx, abbox_hw
 
@@ -476,12 +480,11 @@ class SSD300:
         chosen_num_neg = tf.cond(num_neg > 3*num_pos, lambda: 3*num_pos, lambda: num_neg)
         neg_class_id = tf.constant([self.num_classes-1])
         neg_label = tf.tile(neg_class_id, [num_neg])
-        # neg_label = tf.one_hot(neg_class_id, depth=self.num_classes)
 
         total_neg_loss = tf.losses.sparse_softmax_cross_entropy(neg_label, neg_pconf, reduction=tf.losses.Reduction.NONE)
         sorted_neg_loss = tf.gather(total_neg_loss, tf.contrib.framework.argsort(total_neg_loss, direction='DESCENDING'))
         chosen_neg_loss = tf.gather(sorted_neg_loss, tf.range(0, chosen_num_neg, dtype=tf.int32))
-        neg_loss = tf.reduce_sum(chosen_neg_loss)
+        neg_loss = tf.reduce_mean(chosen_neg_loss)
 
         total_pos_pbbox_yx = tf.concat([best_pbbox_yx, pos_ppox_yx], axis=0)
         total_pos_pbbox_hw = tf.concat([best_pbbox_hw, pos_ppox_hw], axis=0)
@@ -492,12 +495,12 @@ class SSD300:
         total_pos_abbox_yx = tf.concat([best_abbox_yx, pos_abbox_yx], axis=0)
         total_pos_abbox_hw = tf.concat([best_abbox_hw, pos_abbox_hw], axis=0)
 
-        pos_conf_loss = tf.losses.sparse_softmax_cross_entropy(total_pos_label, total_pos_pconf, reduction=tf.losses.Reduction.SUM)
+        pos_conf_loss = tf.losses.sparse_softmax_cross_entropy(total_pos_label, total_pos_pconf, reduction=tf.losses.Reduction.MEAN)
         pos_truth_pbbox_yx = (total_pos_gbbox_yx - total_pos_abbox_yx) / total_pos_abbox_hw
         pos_truth_pbbox_hw = tf.log(total_pos_gbbox_hw / total_pos_abbox_hw)
-        pos_yx_loss = tf.reduce_sum(self._smooth_l1_loss(total_pos_pbbox_yx - pos_truth_pbbox_yx))
-        pos_hw_loss = tf.reduce_sum(self._smooth_l1_loss(total_pos_pbbox_hw - pos_truth_pbbox_hw))
-        pos_coord_loss = tf.reduce_sum(pos_yx_loss + pos_hw_loss)
+        pos_yx_loss = tf.reduce_sum(self._smooth_l1_loss(total_pos_pbbox_yx - pos_truth_pbbox_yx), axis=-1)
+        pos_hw_loss = tf.reduce_sum(self._smooth_l1_loss(total_pos_pbbox_hw - pos_truth_pbbox_hw), axis=-1)
+        pos_coord_loss = tf.reduce_mean(pos_yx_loss + pos_hw_loss)
 
         total_loss = neg_loss + pos_conf_loss + pos_coord_loss
         return total_loss
