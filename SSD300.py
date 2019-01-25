@@ -101,7 +101,7 @@ class SSD300:
             p5bbox_yx, p5bbox_hw, p5conf = self._get_pbbox(pred5)
             p6bbox_yx, p6bbox_hw, p6conf = self._get_pbbox(pred6)
 
-            s = [0.2 + (0.9 - 0.2) / 5 * (i-1) * self.input_size for i in range(1, 8)]
+            s = [(0.2 + (0.9 - 0.2) / 5 * (i-1)) * self.input_size for i in range(1, 8)]
             s = [[s[i], (s[i]*s[i+1])**0.5] for i in range(0, 6)]
             a1bbox_y1x1, a1bbox_y2x2, a1bbox_yx, a1bbox_hw = self._get_abbox(s[0], [2, 1/2], p1shape)
             a2bbox_y1x1, a2bbox_y2x2, a2bbox_yx, a2bbox_hw = self._get_abbox(s[1], [2, 1/2, 3, 1/3], p2shape)
@@ -117,134 +117,69 @@ class SSD300:
             abbox_y2x2 = tf.concat([a1bbox_y2x2, a2bbox_y2x2, a3bbox_y2x2, a4bbox_y2x2, a5bbox_y2x2, a6bbox_y2x2], axis=0)
             abbox_yx = tf.concat([a1bbox_yx, a2bbox_yx, a3bbox_yx, a4bbox_yx, a5bbox_yx, a6bbox_yx], axis=0)
             abbox_hw = tf.concat([a1bbox_hw, a2bbox_hw, a3bbox_hw, a4bbox_hw, a5bbox_hw, a6bbox_hw], axis=0)
-        if self.mode == 'train':
-            i = 0.
-            loss = 0.
-            cond = lambda loss, i: tf.less(i, tf.cast(self.batch_size, tf.float32))
-            body = lambda loss, i: (
-                tf.add(loss, self._compute_one_image_loss(
-                    tf.squeeze(tf.gather(pbbox_yx, tf.cast(i, tf.int32))),
-                    tf.squeeze(tf.gather(pbbox_hw, tf.cast(i, tf.int32))),
-                    abbox_y1x1,
-                    abbox_y2x2,
-                    abbox_yx,
-                    abbox_hw,
-                    tf.squeeze(tf.gather(pconf, tf.cast(i, tf.int32))),
-                    tf.squeeze(tf.gather(self.ground_truth, tf.cast(i, tf.int32))),
-                )),
-                tf.add(i, 1.)
-            )
-            init_state = (loss, i)
-            state = tf.while_loop(cond, body, init_state)
-            total_loss, self.test = state
-            total_loss = total_loss / self.batch_size
-            optimizer = tf.train.MomentumOptimizer(learning_rate=self.lr, momentum=.9)
-            self.loss = total_loss + self.weight_decay * tf.add_n(
-                [tf.nn.l2_loss(var) for var in tf.trainable_variables('feature_extractor')]
-            ) + self.weight_decay * tf.add_n(
-                [tf.nn.l2_loss(var) for var in tf.trainable_variables('regressor')]
-            )
-            self.train_op = optimizer.minimize(self.loss, global_step=self.global_step)
-        else:
-            pbbox_yxt = pbbox_yx[0, ...]
-            pbbox_hwt = pbbox_hw[0, ...]
-            confidence = tf.nn.softmax(pconf[0, ...])
-            class_id = tf.argmax(confidence, axis=-1)
-            conf_mask = tf.less(class_id, self.num_classes - 1)
-            pbbox_yxt = tf.boolean_mask(pbbox_yxt, conf_mask)
-            pbbox_hwt = tf.boolean_mask(pbbox_hwt, conf_mask)
-            confidence = tf.boolean_mask(confidence, conf_mask)[:, :self.num_classes - 1]
-            abbox_yxt = tf.boolean_mask(abbox_yx, conf_mask)
-            abbox_hwt = tf.boolean_mask(abbox_hw, conf_mask)
-            dpbbox_yxt = pbbox_yxt * abbox_hwt + abbox_yxt
-            dpbbox_hwt = abbox_hwt * tf.exp(pbbox_hwt)
-            dpbbox_y1x1 = dpbbox_yxt - dpbbox_hwt / 2.
-            dpbbox_y2x2 = dpbbox_yxt + dpbbox_hwt / 2.
-            dpbbox_y1x1y2x2 = tf.concat([dpbbox_y1x1, dpbbox_y2x2], axis=-1)
-            filter_mask = tf.greater_equal(confidence, self.nms_score_threshold)
-            scores = []
-            class_id = []
-            bbox = []
-            for i in range(self.num_classes - 1):
-                scoresi = tf.boolean_mask(confidence[:, i], filter_mask[:, i])
-                bboxi = tf.boolean_mask(dpbbox_y1x1y2x2, filter_mask[:, i])
-                selected_indices = tf.image.non_max_suppression(
-
-                    bboxi, scoresi, self.nms_max_boxes, self.nms_iou_threshold,
+            if self.mode == 'train':
+                i = 0.
+                loss = 0.
+                cond = lambda loss, i: tf.less(i, tf.cast(self.batch_size, tf.float32))
+                body = lambda loss, i: (
+                    tf.add(loss, self._compute_one_image_loss(
+                        tf.squeeze(tf.gather(pbbox_yx, tf.cast(i, tf.int32))),
+                        tf.squeeze(tf.gather(pbbox_hw, tf.cast(i, tf.int32))),
+                        abbox_y1x1,
+                        abbox_y2x2,
+                        abbox_yx,
+                        abbox_hw,
+                        tf.squeeze(tf.gather(pconf, tf.cast(i, tf.int32))),
+                        tf.squeeze(tf.gather(self.ground_truth, tf.cast(i, tf.int32))),
+                    )),
+                    tf.add(i, 1.)
                 )
-                scores.append(tf.gather(scoresi, selected_indices))
-                bbox.append(tf.gather(bboxi, selected_indices))
-                class_id.append(tf.ones_like(tf.gather(scoresi, selected_indices), tf.int32) * i)
-            bbox = tf.concat(bbox, axis=0)
-            scores = tf.concat(scores, axis=0)
-            class_id = tf.concat(class_id, axis=0)
+                init_state = (loss, i)
+                state = tf.while_loop(cond, body, init_state)
+                total_loss, _ = state
+                total_loss = total_loss / self.batch_size
+                optimizer = tf.train.MomentumOptimizer(learning_rate=self.lr, momentum=.9)
+                self.loss = total_loss + self.weight_decay * tf.add_n(
+                    [tf.nn.l2_loss(var) for var in tf.trainable_variables('feature_extractor')]
+                ) + self.weight_decay * tf.add_n(
+                    [tf.nn.l2_loss(var) for var in tf.trainable_variables('regressor')]
+                )
+                self.train_op = optimizer.minimize(self.loss, global_step=self.global_step)
+            else:
+                pbbox_yxt = pbbox_yx[0, ...]
+                pbbox_hwt = pbbox_hw[0, ...]
+                confidence = tf.nn.softmax(pconf[0, ...])
+                class_id = tf.argmax(confidence, axis=-1)
+                conf_mask = tf.less(class_id, self.num_classes - 1)
+                pbbox_yxt = tf.boolean_mask(pbbox_yxt, conf_mask)
+                pbbox_hwt = tf.boolean_mask(pbbox_hwt, conf_mask)
+                confidence = tf.boolean_mask(confidence, conf_mask)[:, :self.num_classes - 1]
+                abbox_yxt = tf.boolean_mask(abbox_yx, conf_mask)
+                abbox_hwt = tf.boolean_mask(abbox_hw, conf_mask)
+                dpbbox_yxt = pbbox_yxt * abbox_hwt + abbox_yxt
+                dpbbox_hwt = abbox_hwt * tf.exp(pbbox_hwt)
+                dpbbox_y1x1 = dpbbox_yxt - dpbbox_hwt / 2.
+                dpbbox_y2x2 = dpbbox_yxt + dpbbox_hwt / 2.
+                dpbbox_y1x1y2x2 = tf.concat([dpbbox_y1x1, dpbbox_y2x2], axis=-1)
+                filter_mask = tf.greater_equal(confidence, self.nms_score_threshold)
+                scores = []
+                class_id = []
+                bbox = []
+                for i in range(self.num_classes - 1):
+                    scoresi = tf.boolean_mask(confidence[:, i], filter_mask[:, i])
+                    bboxi = tf.boolean_mask(dpbbox_y1x1y2x2, filter_mask[:, i])
+                    selected_indices = tf.image.non_max_suppression(
 
-            self.detection_pred = [scores, bbox, class_id]
+                        bboxi, scoresi, self.nms_max_boxes, self.nms_iou_threshold,
+                    )
+                    scores.append(tf.gather(scoresi, selected_indices))
+                    bbox.append(tf.gather(bboxi, selected_indices))
+                    class_id.append(tf.ones_like(tf.gather(scoresi, selected_indices), tf.int32) * i)
+                bbox = tf.concat(bbox, axis=0)
+                scores = tf.concat(scores, axis=0)
+                class_id = tf.concat(class_id, axis=0)
 
-    def _init_session(self):
-        self.sess = tf.InteractiveSession()
-        self.sess.run(tf.global_variables_initializer())
-        if self.mode == 'train':
-            self.sess.run(self.train_initializer)
-
-    def _create_saver(self):
-        weights = tf.trainable_variables(scope='feature_extractor') + tf.trainable_variables('regressor')
-        self.saver = tf.train.Saver(weights)
-        self.best_saver = tf.train.Saver(weights)
-
-    def _create_summary(self):
-        with tf.variable_scope('summaries'):
-            tf.summary.scalar('loss', self.loss)
-            self.summary_op = tf.summary.merge_all()
-
-    def train_one_epoch(self, lr, writer=None, data_provider=None):
-        self.is_training = True
-        if data_provider is not None:
-            self.num_train = data_provider['num_train']
-            self.train_generator = data_provider['train_generator']
-            self.train_initializer, self.train_iterator = self.train_generator
-            if data_provider['val_generator'] is not None:
-                self.num_val = data_provider['num_val']
-                self.val_generator = data_provider['val_generator']
-                self.val_initializer, self.val_iterator = self.val_generator
-            self.data_shape = data_provider['data_shape']
-            shape = [self.batch_size].extend(data_provider['data_shape'])
-            self.images.set_shape(shape)
-        self.sess.run(self.train_initializer)
-        mean_loss = []
-        num_iters = self.num_train // self.batch_size
-        for i in range(num_iters):
-            _, loss, summaries = self.sess.run([self.train_op, self.loss, self.summary_op],
-                                               feed_dict={self.lr: lr})
-            sys.stdout.write('\r>> ' + 'iters '+str(i)+str('/')+str(num_iters)+' loss '+str(loss))
-            sys.stdout.flush()
-            mean_loss.append(loss)
-            if writer is not None:
-                writer.add_summary(summaries, global_step=self.global_step)
-        sys.stdout.write('\n')
-        mean_loss = np.mean(mean_loss)
-        return mean_loss
-
-    def test_one_image(self, images):
-        self.is_training = False
-        pred = self.sess.run(self.detection_pred, feed_dict={self.images: images})
-        return pred
-
-    def save_weight(self, mode, path):
-        assert(mode in ['latest', 'best'])
-        if mode == 'latest':
-            saver = self.saver
-        else:
-            saver = self.best_saver
-        if not tf.gfile.Exists(os.path.dirname(path)):
-            tf.gfile.MakeDirs(os.path.dirname(path))
-            print(os.path.dirname(path), 'does not exist, create it done')
-        saver.save(self.sess, path, global_step=self.global_step)
-        print('save', mode, 'model in', path, 'successfully')
-
-    def load_weight(self, path):
-        self.saver.restore(self.sess, path)
-        print('load weight', path, 'successfully')
+                self.detection_pred = [scores, bbox, class_id]
 
     def _feature_extractor(self, images):
         conv1_1 = self._load_conv_layer(images,
@@ -358,7 +293,7 @@ class SSD300:
                                                         trainable=True),
                                         name="conv5_3")
         pool5 = self._max_pooling(conv5_3, 3, 1, 'pool5')
-        conv6 = self._conv_layer(pool5, 1024, 3, 1, 'conv6', 2, activation=tf.nn.relu)
+        conv6 = self._conv_layer(pool5, 1024, 3, 1, 'conv6', dilation_rate=2, activation=tf.nn.relu)
         conv7 = self._conv_layer(conv6, 1024, 1, 1, 'conv7', activation=tf.nn.relu)
         conv8_1 = self._conv_layer(conv7, 256, 1, 1, 'conv8_1', activation=tf.nn.relu)
         conv8_2 = self._conv_layer(conv8_1, 512, 3, 2, 'conv8_2', activation=tf.nn.relu)
@@ -482,8 +417,7 @@ class SSD300:
         neg_label = tf.tile(neg_class_id, [num_neg])
 
         total_neg_loss = tf.losses.sparse_softmax_cross_entropy(neg_label, neg_pconf, reduction=tf.losses.Reduction.NONE)
-        sorted_neg_loss = tf.gather(total_neg_loss, tf.contrib.framework.argsort(total_neg_loss, direction='DESCENDING'))
-        chosen_neg_loss = tf.gather(sorted_neg_loss, tf.range(0, chosen_num_neg, dtype=tf.int32))
+        chosen_neg_loss = tf.nn.top_k(total_neg_loss, chosen_num_neg)
         neg_loss = tf.reduce_mean(chosen_neg_loss)
 
         total_pos_pbbox_yx = tf.concat([best_pbbox_yx, pos_ppox_yx], axis=0)
@@ -507,6 +441,71 @@ class SSD300:
 
     def _smooth_l1_loss(self, x):
         return tf.where(tf.abs(x) < 1., 0.5*x*x, tf.abs(x)-0.5)
+
+    def _init_session(self):
+        self.sess = tf.InteractiveSession()
+        self.sess.run(tf.global_variables_initializer())
+        if self.mode == 'train':
+            self.sess.run(self.train_initializer)
+
+    def _create_saver(self):
+        weights = tf.trainable_variables(scope='feature_extractor') + tf.trainable_variables('regressor')
+        self.saver = tf.train.Saver(weights)
+        self.best_saver = tf.train.Saver(weights)
+
+    def _create_summary(self):
+        with tf.variable_scope('summaries'):
+            tf.summary.scalar('loss', self.loss)
+            self.summary_op = tf.summary.merge_all()
+
+    def train_one_epoch(self, lr, writer=None, data_provider=None):
+        self.is_training = True
+        if data_provider is not None:
+            self.num_train = data_provider['num_train']
+            self.train_generator = data_provider['train_generator']
+            self.train_initializer, self.train_iterator = self.train_generator
+            if data_provider['val_generator'] is not None:
+                self.num_val = data_provider['num_val']
+                self.val_generator = data_provider['val_generator']
+                self.val_initializer, self.val_iterator = self.val_generator
+            self.data_shape = data_provider['data_shape']
+            shape = [self.batch_size].extend(data_provider['data_shape'])
+            self.images.set_shape(shape)
+        self.sess.run(self.train_initializer)
+        mean_loss = []
+        num_iters = self.num_train // self.batch_size
+        for i in range(num_iters):
+            _, loss, summaries = self.sess.run([self.train_op, self.loss, self.summary_op],
+                                               feed_dict={self.lr: lr})
+            sys.stdout.write('\r>> ' + 'iters '+str(i)+str('/')+str(num_iters)+' loss '+str(loss))
+            sys.stdout.flush()
+            mean_loss.append(loss)
+            if writer is not None:
+                writer.add_summary(summaries, global_step=self.global_step)
+        sys.stdout.write('\n')
+        mean_loss = np.mean(mean_loss)
+        return mean_loss
+
+    def test_one_image(self, images):
+        self.is_training = False
+        pred = self.sess.run(self.detection_pred, feed_dict={self.images: images})
+        return pred
+
+    def save_weight(self, mode, path):
+        assert(mode in ['latest', 'best'])
+        if mode == 'latest':
+            saver = self.saver
+        else:
+            saver = self.best_saver
+        if not tf.gfile.Exists(os.path.dirname(path)):
+            tf.gfile.MakeDirs(os.path.dirname(path))
+            print(os.path.dirname(path), 'does not exist, create it done')
+        saver.save(self.sess, path, global_step=self.global_step)
+        print('save', mode, 'model in', path, 'successfully')
+
+    def load_weight(self, path):
+        self.saver.restore(self.sess, path)
+        print('load weight', path, 'successfully')
 
     def _bn(self, bottom):
         bn = tf.layers.batch_normalization(
