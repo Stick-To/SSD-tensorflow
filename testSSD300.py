@@ -12,9 +12,9 @@ from skimage import io, transform
 from utils.voc_classname_encoder import  classname_to_ids
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-lr = 0.0001
-batch_size = 2
-buffer_size = 3
+lr = 0.01
+batch_size = 48
+buffer_size = 512
 epochs = 160
 reduce_lr_epoch = [50, 150]
 ckpt_path = os.path.join('.', 'vgg_16.ckpt')
