@@ -9,3 +9,8 @@ The pre-trained vgg_16.ckpt could be downloaded from http://download.tensorflow.
 # SSD300
 
 ![image](https://github.com/Stick-To/SSD-tensorflow/blob/master/image/img1.png)
+
+
+# Experimental Environment
+
+python3.6 tensorflow1.12
