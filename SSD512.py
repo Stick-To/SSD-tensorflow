@@ -8,17 +8,17 @@ import os
 import numpy as np
 
 
-class SSD300:
+class SSD512:
     def __init__(self, config, data_provider):
         assert config['mode'] in ['train', 'test']
         assert config['data_format'] in ['channels_first', 'channels_last']
         self.config = config
         self.data_provider = data_provider
-        self.input_size = 300
+        self.input_size = 512
         if config['data_format'] == 'channels_last':
-            self.data_shape = [300, 300, 3]
+            self.data_shape = [512, 512, 3]
         else:
-            self.data_shape = [3, 300, 300]
+            self.data_shape = [3, 512, 512]
         self.num_classes = config['num_classes'] + 1
         self.weight_decay = config['weight_decay']
         self.prob = 1. - config['keep_prob']
@@ -69,7 +69,7 @@ class SSD300:
 
     def _build_graph(self):
         with tf.variable_scope('feature_extractor'):
-            feat1, feat2, feat3, feat4, feat5, feat6 = self._feature_extractor(self.images)
+            feat1, feat2, feat3, feat4, feat5, feat6, feat7 = self._feature_extractor(self.images)
             feat1 = tf.nn.l2_normalize(feat1, axis=3 if self.data_format == 'channels_last' else 1)
             norm_factor = tf.get_variable('l2_norm_factor', initializer=tf.constant(20.))
             feat1 = norm_factor * feat1
@@ -78,8 +78,9 @@ class SSD300:
             pred2 = self._conv_layer(feat2, 6*(self.num_classes+4), 3, 1, 'pred2')
             pred3 = self._conv_layer(feat3, 6*(self.num_classes+4), 3, 1, 'pred3')
             pred4 = self._conv_layer(feat4, 6*(self.num_classes+4), 3, 1, 'pred4')
-            pred5 = self._conv_layer(feat5, 4*(self.num_classes+4), 3, 1, 'pred5')
+            pred5 = self._conv_layer(feat5, 6*(self.num_classes+4), 3, 1, 'pred5')
             pred6 = self._conv_layer(feat6, 4*(self.num_classes+4), 3, 1, 'pred6')
+            pred7 = self._conv_layer(feat7, 4*(self.num_classes+4), 3, 1, 'pred7')
             if self.data_format == 'channels_first':
                 pred1 = tf.transpose(pred1, [0, 2, 3, 1])
                 pred2 = tf.transpose(pred2, [0, 2, 3, 1])
@@ -87,12 +88,14 @@ class SSD300:
                 pred4 = tf.transpose(pred4, [0, 2, 3, 1])
                 pred5 = tf.transpose(pred5, [0, 2, 3, 1])
                 pred6 = tf.transpose(pred6, [0, 2, 3, 1])
+                pred7 = tf.transpose(pred7, [0, 2, 3, 1])
             p1shape = tf.shape(pred1)
             p2shape = tf.shape(pred2)
             p3shape = tf.shape(pred3)
             p4shape = tf.shape(pred4)
             p5shape = tf.shape(pred5)
             p6shape = tf.shape(pred6)
+            p7shape = tf.shape(pred7)
         with tf.variable_scope('inference'):
             p1bbox_yx, p1bbox_hw, p1conf = self._get_pbbox(pred1)
             p2bbox_yx, p2bbox_hw, p2conf = self._get_pbbox(pred2)
@@ -100,23 +103,26 @@ class SSD300:
             p4bbox_yx, p4bbox_hw, p4conf = self._get_pbbox(pred4)
             p5bbox_yx, p5bbox_hw, p5conf = self._get_pbbox(pred5)
             p6bbox_yx, p6bbox_hw, p6conf = self._get_pbbox(pred6)
+            p7bbox_yx, p7bbox_hw, p7conf = self._get_pbbox(pred7)
 
-            s = [(0.2 + (0.9 - 0.2) / 5 * (i-1)) * self.input_size for i in range(1, 8)]
-            s = [[s[i], (s[i]*s[i+1])**0.5] for i in range(0, 6)]
+            s = [0.07 * self.input_size]
+            s = s + [(0.15 + (0.9 - 0.15) / 5 * (i-1)) * self.input_size for i in range(1, 8)]
+            s = [[s[i], (s[i]*s[i+1])**0.5] for i in range(0, 7)]
             a1bbox_y1x1, a1bbox_y2x2, a1bbox_yx, a1bbox_hw = self._get_abbox(s[0], [2, 1/2], p1shape)
             a2bbox_y1x1, a2bbox_y2x2, a2bbox_yx, a2bbox_hw = self._get_abbox(s[1], [2, 1/2, 3, 1/3], p2shape)
             a3bbox_y1x1, a3bbox_y2x2, a3bbox_yx, a3bbox_hw = self._get_abbox(s[2], [2, 1/2, 3, 1/3], p3shape)
             a4bbox_y1x1, a4bbox_y2x2, a4bbox_yx, a4bbox_hw = self._get_abbox(s[3], [2, 1/2, 3, 1/3], p4shape)
-            a5bbox_y1x1, a5bbox_y2x2, a5bbox_yx, a5bbox_hw = self._get_abbox(s[4], [2, 1/2], p5shape)
+            a5bbox_y1x1, a5bbox_y2x2, a5bbox_yx, a5bbox_hw = self._get_abbox(s[4], [2, 1/2, 3, 1/3], p5shape)
             a6bbox_y1x1, a6bbox_y2x2, a6bbox_yx, a6bbox_hw = self._get_abbox(s[5], [2, 1/2], p6shape)
+            a7bbox_y1x1, a7bbox_y2x2, a7bbox_yx, a7bbox_hw = self._get_abbox(s[6], [2, 1/2], p7shape)
 
-            pbbox_yx = tf.concat([p1bbox_yx, p2bbox_yx, p3bbox_yx, p4bbox_yx, p5bbox_yx, p6bbox_yx], axis=1)
-            pbbox_hw = tf.concat([p1bbox_hw, p2bbox_hw, p3bbox_hw, p4bbox_hw, p5bbox_hw, p6bbox_hw], axis=1)
-            pconf = tf.concat([p1conf, p2conf, p3conf, p4conf, p5conf, p6conf], axis=1)
-            abbox_y1x1 = tf.concat([a1bbox_y1x1, a2bbox_y1x1, a3bbox_y1x1, a4bbox_y1x1, a5bbox_y1x1, a6bbox_y1x1], axis=0)
-            abbox_y2x2 = tf.concat([a1bbox_y2x2, a2bbox_y2x2, a3bbox_y2x2, a4bbox_y2x2, a5bbox_y2x2, a6bbox_y2x2], axis=0)
-            abbox_yx = tf.concat([a1bbox_yx, a2bbox_yx, a3bbox_yx, a4bbox_yx, a5bbox_yx, a6bbox_yx], axis=0)
-            abbox_hw = tf.concat([a1bbox_hw, a2bbox_hw, a3bbox_hw, a4bbox_hw, a5bbox_hw, a6bbox_hw], axis=0)
+            pbbox_yx = tf.concat([p1bbox_yx, p2bbox_yx, p3bbox_yx, p4bbox_yx, p5bbox_yx, p6bbox_yx, p7bbox_yx], axis=1)
+            pbbox_hw = tf.concat([p1bbox_hw, p2bbox_hw, p3bbox_hw, p4bbox_hw, p5bbox_hw, p6bbox_hw, p7bbox_hw], axis=1)
+            pconf = tf.concat([p1conf, p2conf, p3conf, p4conf, p5conf, p6conf, p7conf], axis=1)
+            abbox_y1x1 = tf.concat([a1bbox_y1x1, a2bbox_y1x1, a3bbox_y1x1, a4bbox_y1x1, a5bbox_y1x1, a6bbox_y1x1, a7bbox_y1x1], axis=0)
+            abbox_y2x2 = tf.concat([a1bbox_y2x2, a2bbox_y2x2, a3bbox_y2x2, a4bbox_y2x2, a5bbox_y2x2, a6bbox_y2x2, a7bbox_y2x2], axis=0)
+            abbox_yx = tf.concat([a1bbox_yx, a2bbox_yx, a3bbox_yx, a4bbox_yx, a5bbox_yx, a6bbox_yx, a7bbox_yx], axis=0)
+            abbox_hw = tf.concat([a1bbox_hw, a2bbox_hw, a3bbox_hw, a4bbox_hw, a5bbox_hw, a6bbox_hw, a7bbox_hw], axis=0)
             if self.mode == 'train':
                 i = 0.
                 loss = 0.
@@ -303,7 +309,9 @@ class SSD300:
         conv10_2 = self._conv_layer(conv10_1, 256, 3, 1, 'conv10_2', activation=tf.nn.relu)
         conv11_1 = self._conv_layer(conv10_2, 128, 1, 1, 'conv11_1', activation=tf.nn.relu)
         conv11_2 = self._conv_layer(conv11_1, 256, 3, 2, 'conv11_2', activation=tf.nn.relu)
-        return conv4_3, conv7, conv8_2, conv9_2, conv10_2, conv11_2
+        conv12_1 = self._conv_layer(conv11_2, 128, 1, 1, 'conv12_1', activation=tf.nn.relu)
+        conv12_2 = self._conv_layer(conv12_1, 256, 3, 2, 'conv12_2', activation=tf.nn.relu)
+        return conv4_3, conv7, conv8_2, conv9_2, conv10_2, conv11_2, conv12_2
 
     def _get_pbbox(self, pred):
         pred = tf.reshape(pred, [self.batch_size, -1, self.num_classes+4])

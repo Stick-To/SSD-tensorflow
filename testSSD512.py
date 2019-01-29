@@ -4,12 +4,12 @@ from __future__ import print_function
 from utils import tfrecord_voc_utils as voc_utils
 import tensorflow as tf
 import numpy as np
-import SSD300 as net
+import SSD512 as net
 import os
-# import matplotlib.pyplot as plt
-# import matplotlib.patches as patches
-# from skimage import io, transform
-# from utils.voc_classname_encoder import classname_to_ids
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from skimage import io, transform
+from utils.voc_classname_encoder import classname_to_ids
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 lr = 0.01
@@ -33,7 +33,7 @@ config = {
 
 image_preprocess_config = {
     'data_format': 'channels_last',
-    'target_size': [300, 300],
+    'target_size': [512, 512],
     'shorter_side': 480,
     'is_random_crop': False,
     'random_horizontal_flip': 0.5,
@@ -47,26 +47,26 @@ data = ['./test/test_00000-of-00005.tfrecord',
 train_gen = voc_utils.get_generator(data,
                                     batch_size, buffer_size, image_preprocess_config)
 trainset_provider = {
-    'data_shape': [300, 300, 3],
+    'data_shape': [512, 512, 3],
     'num_train': 5000,
     'num_val': 0,
     'train_generator': train_gen,
     'val_generator': None
 }
-ssd300 = net.SSD300(config, trainset_provider)
-# ssd300.load_weight('./ssd/test-64954')
+ssd512 = net.SSD512(config, trainset_provider)
+# ssd512.load_weight('./ssd/test-64954')
 for i in range(epochs):
     print('-'*25, 'epoch', i, '-'*25)
     if i in reduce_lr_epoch:
         lr = lr/10.
         print('reduce lr, lr=', lr, 'now')
-    mean_loss = ssd300.train_one_epoch(lr)
+    mean_loss = ssd512.train_one_epoch(lr)
     print('>> mean loss', mean_loss)
-    ssd300.save_weight('latest', './ssd/test')
+    ssd512.save_weight('latest', './ssd/test')
 # img = io.imread('000026.jpg')
-# img = transform.resize(img, [300,300])
+# img = transform.resize(img, [512,512])
 # img = np.expand_dims(img, 0)
-# result = ssd300.test_one_image(img)
+# result = ssd512.test_one_image(img)
 # id_to_clasname = {k:v for (v,k) in classname_to_ids.items()}
 # scores = result[0]
 # bbox = result[1]
