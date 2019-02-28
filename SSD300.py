@@ -324,7 +324,7 @@ class SSD300:
 
         priors = [[size[0], size[0]], [size[1], size[1]]]
         for i in range(len(aspect_ratio)):
-            priors.append([size[0]*(aspect_ratio[0]**0.5), size[0]/(aspect_ratio[0]**0.5)])
+            priors.append([size[0]*(aspect_ratio[i]**0.5), size[0]/(aspect_ratio[i]**0.5)])
         priors = tf.convert_to_tensor(priors, tf.float32)
         priors = tf.reshape(priors, [1, 1, -1, 2])
 
