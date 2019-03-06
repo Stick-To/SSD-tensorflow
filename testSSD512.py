@@ -6,9 +6,9 @@ import tensorflow as tf
 import numpy as np
 import SSD512 as net
 import os
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-from skimage import io, transform
+# import matplotlib.pyplot as plt
+# import matplotlib.patches as patches
+# from skimage import io, transform
 from utils.voc_classname_encoder import classname_to_ids
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
@@ -19,11 +19,11 @@ epochs = 160
 reduce_lr_epoch = [50, 150]
 ckpt_path = os.path.join('.', 'vgg_16.ckpt')
 config = {
-    'mode': 'train',  # train ,test
-    'data_format': 'channels_last',
+    'mode': 'train',                                             # train ,test
+    'data_format': 'channels_last',                              # 'channels_last' 'channels_first'
     'num_classes': 20,
     'weight_decay': 1e-4,
-    'keep_prob': 0.5,
+    'keep_prob': 0.5,                                            # not used
     'batch_size': batch_size,
     'nms_score_threshold': 0.5,
     'nms_max_boxes': 20,
@@ -32,13 +32,13 @@ config = {
 }
 
 image_preprocess_config = {
-    'data_format': 'channels_last',
+    'data_format': 'channels_last',                              # 'channels_last' 'channels_first'
     'target_size': [512, 512],
     'shorter_side': 480,
     'is_random_crop': False,
-    'random_horizontal_flip': 0.5,
-    'random_vertical_flip': 0.,
-    'pad_truth_to': 60
+    'random_horizontal_flip': 0.5,                               # <=1.0
+    'random_vertical_flip': 0.,                                  # <=1.0
+    'pad_truth_to': 60                                           # >=2 , >= the maximum of number of bbox per image + 1
 }
 
 data = ['./test/test_00000-of-00005.tfrecord',
@@ -49,9 +49,9 @@ train_gen = voc_utils.get_generator(data,
 trainset_provider = {
     'data_shape': [512, 512, 3],
     'num_train': 5000,
-    'num_val': 0,
+    'num_val': 0,  # not used
     'train_generator': train_gen,
-    'val_generator': None
+    'val_generator': None   # not used
 }
 ssd512 = net.SSD512(config, trainset_provider)
 # ssd512.load_weight('./ssd/test-64954')
@@ -62,7 +62,7 @@ for i in range(epochs):
         print('reduce lr, lr=', lr, 'now')
     mean_loss = ssd512.train_one_epoch(lr)
     print('>> mean loss', mean_loss)
-    ssd512.save_weight('latest', './ssd/test')
+    ssd512.save_weight('latest', './ssd/test')                     # 'latest', 'best
 # img = io.imread('000026.jpg')
 # img = transform.resize(img, [512,512])
 # img = np.expand_dims(img, 0)

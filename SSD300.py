@@ -458,30 +458,15 @@ class SSD300:
             tf.summary.scalar('loss', self.loss)
             self.summary_op = tf.summary.merge_all()
 
-    def train_one_epoch(self, lr, writer=None, data_provider=None):
+    def train_one_epoch(self, lr):
         self.is_training = True
-        if data_provider is not None:
-            self.num_train = data_provider['num_train']
-            self.train_generator = data_provider['train_generator']
-            self.train_initializer, self.train_iterator = self.train_generator
-            if data_provider['val_generator'] is not None:
-                self.num_val = data_provider['num_val']
-                self.val_generator = data_provider['val_generator']
-                self.val_initializer, self.val_iterator = self.val_generator
-            self.data_shape = data_provider['data_shape']
-            shape = [self.batch_size].extend(data_provider['data_shape'])
-            self.images.set_shape(shape)
-        self.sess.run(self.train_initializer)
         mean_loss = []
         num_iters = self.num_train // self.batch_size
         for i in range(num_iters):
-            _, loss, summaries = self.sess.run([self.train_op, self.loss, self.summary_op],
-                                               feed_dict={self.lr: lr})
+            _, loss = self.sess.run([self.train_op, self.loss], feed_dict={self.lr: lr})
             sys.stdout.write('\r>> ' + 'iters '+str(i)+str('/')+str(num_iters)+' loss '+str(loss))
             sys.stdout.flush()
             mean_loss.append(loss)
-            if writer is not None:
-                writer.add_summary(summaries, global_step=self.global_step)
         sys.stdout.write('\n')
         mean_loss = np.mean(mean_loss)
         return mean_loss
