@@ -12,6 +12,9 @@ The pre-trained vgg_16.ckpt could be downloaded from http://download.tensorflow.
 
 # SSD512
 
+# Train your own data
+
+see readme.md of https://github.com/Stick-To/Object-Detection-API-Tensorflow
 
 # Experimental Environment
 
