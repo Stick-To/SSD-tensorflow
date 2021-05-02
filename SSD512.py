@@ -40,7 +40,6 @@ class SSD512:
                 self.val_initializer, self.val_iterator = self.val_generator
 
         self.global_step = tf.get_variable(name='global_step', initializer=tf.constant(0), trainable=False)
-        self.is_training = True
 
         self._define_inputs()
         self._build_graph()
@@ -66,6 +65,7 @@ class SSD512:
             self.images = self.images - mean
             self.ground_truth = tf.placeholder(tf.float32, [self.batch_size, None, 5], name='labels')
         self.lr = tf.placeholder(dtype=tf.float32, shape=[], name='lr')
+        self.is_training = tf.placeholder(dtype=tf.bool, shape=[], name='is_training')
 
     def _build_graph(self):
         with tf.variable_scope('feature_extractor'):
@@ -471,12 +471,11 @@ class SSD512:
             self.summary_op = tf.summary.merge_all()
 
     def train_one_epoch(self, lr):
-        self.is_training = True
         self.sess.run(self.train_initializer)
         mean_loss = []
         num_iters = self.num_train // self.batch_size
         for i in range(num_iters):
-            _, loss = self.sess.run([self.train_op, self.loss], feed_dict={self.lr: lr})
+            _, loss = self.sess.run([self.train_op, self.loss], feed_dict={self.lr: lr, self.is_traning:True})
             sys.stdout.write('\r>> ' + 'iters '+str(i)+str('/')+str(num_iters)+' loss '+str(loss))
             sys.stdout.flush()
             mean_loss.append(loss)
@@ -485,8 +484,7 @@ class SSD512:
         return mean_loss
 
     def test_one_image(self, images):
-        self.is_training = False
-        pred = self.sess.run(self.detection_pred, feed_dict={self.images: images})
+        pred = self.sess.run(self.detection_pred, feed_dict={self.images: images, self.is_traning:False})
         return pred
 
     def save_weight(self, mode, path):
